@@ -2,128 +2,117 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Cell : MonoBehaviour {
+/**
+ * Determines cell behaviour
+ */
+public abstract class Cell {
+
+	// Cell types
+	private static int idCount = 0;
+	public static List<Cell> CELLS = new List<Cell>();
+	public static Cell CELL_BASIC = new CellBasic(); 
+	public static Cell CELL_ROCKET = new CellRocket();
+	public static Cell CELL_PLANET = new CellPlanet(); 
 
 	// Static constants
 	protected const string CELL_COLOR = "CellColor";
 	public const int ALL_CELLS = -1;
 	public const int IMMORTAL = -1;
-	public const int SPAWNING = 0;
-	public const int ALIVE = 1;
-	public const int DYING = 2;
-	public const int DEAD = 3;
 
-	// Cell manager
-	protected CellCluster cluster;
-
-	// Cell position
-	protected Vector3Int pos;
+	public const int PREPARE_SPAWN = 0;
+	public const int SPAWNING = 1;
+	public const int ALIVE = 2;
+	public const int DYING = 3;
+	public const int DEAD = 4;
 
 	// Cell attributes and rules
+	public GameObject prefab;
 	protected int id;
-	protected float size;
-	protected float mass;
-	protected int cellLife;
-	protected Color color;
-	protected int updateRate;
-	protected int neighboursCausingDeathMax;	// n or more surrounding cells and cell dies
-	protected int neighboursCausingDeathMin;	// n or less surrounding cells and cell dies
-	protected int neighboursCausingBirthMax;	// Between n - m surrounding cells - inclusive - cell is born
-	protected int neighboursCausingBirthMin;
-
-	// Cell updates
-	protected int state;
-	protected int tickCount;	// TODO: replace with Time.time
-	protected int age;
-	protected int generation;
+	protected float size = 1.0f;
+	protected float mass = 1.0f;
+	protected int cellLife = IMMORTAL;
+	protected int updateRate = 500;
+	protected int spawnTime = 200;
+	protected int neighboursCausingDeathMax = 0;    // n or more surrounding cells and cell dies
+	protected int neighboursCausingDeathMin = 0;    // n or less surrounding cells and cell dies
+	protected int neighboursCausingBirthMax = 0;    // Between n - m surrounding cells - inclusive - cell is born
+	protected int neighboursCausingBirthMin = 0;
 
 
-	protected void reset() {
-		state = SPAWNING;
-		tickCount = 0;
-		age = 0;
-		generation = 0;
+	public Cell() {
+		id = idCount;
+		idCount += 1;
+		CELLS.Add(this);
 	}
 
-
-	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-						    Overriding MonoBehaviour
-	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-	void Start() {
-		reset();
-
-		cluster.setCell(pos, gameObject);
-
-		id = 0;
-		cellLife = IMMORTAL;
-		color = Color.blue;
-		updateRate = 25;
-
-		neighboursCausingDeathMax = 8;
-		neighboursCausingDeathMin = 2;
-		neighboursCausingBirthMax = 2;
-		neighboursCausingBirthMin = 0;
+	public static Cell getCell(int id) {
+		return CELLS[id];
 	}
 
-	void Update() {
-		gameObject.transform.SetPositionAndRotation(
-			cluster.getWorldPosition(pos),
-			Quaternion.identity);
-
-		tickCount++;
-		if (tickCount % updateRate == 0) {
-			// Update cell state and spawn other cells, if possible
-			updateCell();
-			tickCount = 0;
-			age++;
-		} else if (tickCount % updateRate == 1) {
-			// Progress cell into next appropriate state
-			if (state == SPAWNING)
-				spawn ();
-			else if (state == DYING)
-				die ();
-		}
+	public static int cellCount() {
+		return CELLS.Count;
 	}
 
-	void OnEnable() {
-		reset();
-	}
-
-	void OnDisable() {
-		// Prevent double disabling
-		CancelInvoke();
-	}
-
-
-	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-						    Cell behaviour
-	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 	/**
-	 * Updates cell behaviour
+	 * Update state, position, and neighbours of given cell
 	 */
-	protected void updateCell() {
-		// Update this cell's appearance, if required
-//		Material material = gameObject.GetComponent<Material>();
-//		Color color = getColor();
-//		if (color != material.GetColor(CELL_COLOR))
-//			material.SetColor(CELL_COLOR, color);
-
-		// Update adjacent cell spawning
-		foreach (Vector3Int pos in cluster.adjacentPositions(this.pos))
-			if (shouldSpawn(pos))
-				prepareSpawn(pos);
+	public virtual void update(Cluster cluster, UnitCell cell) {
+		// Update adjacent cells
+		spawnChildren(cluster, cell);
 
 		// Update this cell's death
-		if (shouldDie())
-			prepareDeath();
+		if (shouldDie(cluster, cell))
+			prepareDeath(cluster, cell);
+	}
+
+	/*
+     * Operations to update state of cell
+     */
+	public void prepareSpawn(Cluster cluster, Vector3Int pos, UnitCell parent) {   
+		UnitCell cell = cluster.spawnCell(pos, parent);
+		cell.setState(PREPARE_SPAWN);
+	}
+	public void spawn(Cluster cluster, UnitCell cell) {
+		cell.setState(SPAWNING);
+	}
+	public void finishSpawn(Cluster cluster, UnitCell cell) {
+		cell.setState(ALIVE);
+	}
+	public void prepareDeath(Cluster cluster, UnitCell cell) {
+		cell.setState(DYING);
+	}
+	public void die(Cluster cluster, UnitCell cell) {
+		cluster.killCell(cell.getPosition());
+		cell.setState(DEAD);
 	}
 
 	/**
-	 * Returns True if cell at the given position should be spawned
-	 */
-	protected virtual bool shouldSpawn(Vector3Int pos) {
+     * Invoked while cell is spawning
+     */
+	public void moveIntoPlace(Cluster cluster, UnitCell cell) {
+		Vector3 d = (cell.getTargetWorldPosition() - cell.getCurrentWorldPosition()) / 3;
+		cell.move(d);
+	}
+
+
+	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+                            Virtual
+       - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+	/**
+     * Attempt to spawn child cells
+     */
+	protected virtual void spawnChildren(Cluster cluster, UnitCell cell) {
+		foreach (Vector3Int apos in cluster.adjacentPositions(cell.getPosition()))
+			if (shouldSpawn(cluster, apos))
+				prepareSpawn(cluster, apos, cell);
+	}
+
+	/**
+     * Returns True if cell at the given position should be spawned
+     */
+	protected virtual bool shouldSpawn(Cluster cluster, Vector3Int pos) {
 		if (cluster.activeCell(pos))
 			return false;
 
@@ -136,62 +125,37 @@ public class Cell : MonoBehaviour {
 	}
 
 	/**
-	 * Returns True if this cell should die
-	 */
-	protected virtual bool shouldDie() {
-		int adjacentCells = cluster.adjacentCellCount(pos, id);
+     * Returns True if given cell should die
+     */
+	protected virtual bool shouldDie(Cluster cluster, UnitCell cell) {
+		int adjacentCells = cluster.adjacentCellCount(cell.getPosition(), id);
 		return (
-			(cellLife != IMMORTAL && age >= cellLife)
+			(cellLife != IMMORTAL && cell.getAge() >= cellLife)
 			|| adjacentCells >= neighboursCausingDeathMax
 			|| adjacentCells <= neighboursCausingDeathMin
 		);
 	}
 
-	/*
-	 * Operations to change state of cell
-	 */
-	protected void prepareSpawn(Vector3Int pos) { 	
-		cluster.spawnCell(pos);
-		setState(SPAWNING);
-	}
-	protected void spawn() {
-		generation = cluster.adjacentCellGeneration(pos, id) + 1;
-		setState(ALIVE);
-	}
-	protected void prepareDeath() {
-		setState(DYING);
-	}
-	protected void die() {
-		cluster.killCell(pos);
-		setState(DEAD);
-	}
-
 
 	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-						    Getters and Setters
-	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-	public void setCluster(CellCluster cluster) {	this.cluster = cluster; } 
-	public void setPosition(Vector3Int pos) { 		this.pos = pos; }
-	public void setState(int state) { 		  		this.state = state; }
-
-	public CellCluster getCluster() {		return cluster; } 
-	public int getId() { 					return id; }
-	public int getSize() { 					return size; }
-	public int getMass() { 					return mass; }
-	public int getState() { 				return state; }
-	public int getGeneration() {			return generation; }
-	public Color getColor() {				return color; }
-	public static GameObject getPrefab() {	return null; }
-
-
-	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-						    Handlers
-	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+                            Handlers
+       - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 	/*
-	 * Called upon cell creation or deletion by user
-	 */
+	* Called upon cell creation or deletion by user
+	*/
 	public void onCreation(Vector3Int pos) {}
 	public void onDeletion(Vector3Int pos) {}
+
+
+	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+                            Getters and setters
+       - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+	public int getUpdateRate() 		{ return updateRate; }
+	public int getSpawnTime() 		{ return spawnTime; }
+	public GameObject getPrefab() 	{ return prefab; }
+	public int getId() 				{ return id; }
+	public float getSize() 			{ return size; }
+	public float getMass() 			{ return mass; }
 }

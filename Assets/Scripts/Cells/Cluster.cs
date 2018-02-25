@@ -2,71 +2,65 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class CellCluster : MonoBehaviour {
+public class Cluster : MonoBehaviour {
+
+	private Dictionary<Vector3Int, GameObject> cluster;
+	private Cell cell;
+	private int size;
 
 	// Object pooling
 	private const int POOL_COUNT = 512;
 	private Stack<GameObject> cells;
 
-	private Dictionary<Vector3Int, GameObject> cluster;
-	private Vector3 pos;
-	private Vector3 vel;
-	private int size;
-
-
-	public CellCluster(GameObject prefab, int size, Vector3 pos, Vector3 vel) {
-	}
 
 	void Start() {
-		this.size = size;
-		this.pos = pos;
-		this.vel = vel;
-
 		cluster = new Dictionary<Vector3Int, GameObject>();
 		cells = new Stack<GameObject>(POOL_COUNT);
 
 		// Populate cell GameObject pool if empty
 		if (cells.Count == 0)
-			expandPool(POOL_COUNT, prefab);
+			expandPool(POOL_COUNT, cell.getPrefab());
 
 		// Spawn first cell
-		spawnCell(new Vector3Int (0, 0, 0));
+		spawnCell(new Vector3Int (0, 0, 0), null);
 	}
 
 	/**
 	 * Create cell at given position
 	 */
-	public GameObject spawnCell(Vector3Int pos) {
+	public UnitCell spawnCell(Vector3Int pos, UnitCell parent) {
 		// If cell exists in this position, kill it
-		if (getCell(pos))
+		if (getUnitCell(pos) != null)
 			killCell(pos);
 
-		if (cells.Count == 1)
+		if (cells.Count == 0)
 			// Expand object pool
-			expandPool(1, cells.Peek());
+			expandPool(1, this.cell.getPrefab());
 
 		// Get inactive cell GameObject
 		GameObject cellObj = cells.Pop();
 
 		// Set GameObject position
-		cellObj.transform.position = getWorldPosition(pos);
+		cellObj.transform.position = parent ? parent.getTargetWorldPosition() : getWorldPosition(pos);
 		cellObj.transform.rotation = Quaternion.identity;
 		cellObj.SetActive(true);
 
-		// Update Cell and CellCluster
-		Cell cell = cellObj.GetComponent<Cell>();
-		cell.setPosition(pos);
+		// Update Cell and Cluster
+		UnitCell cell = cellObj.GetComponent<UnitCell>();
+		cell.setCell(this.cell);
 		cell.setCluster(this);
-		setCell(pos, cellObj);
+		cell.setPosition(pos);
+		cell.setGeneration(parent ? parent.getGeneration() + 1 : 0);
+		setUnitCell(pos, cellObj);
 
-		return cellObj;
+		return cell;
 	}
 
 	/**
 	 * Kill cell at given position
 	 */
 	public void killCell(Vector3Int pos) {
-		GameObject cellObj = getCellObject(pos);
+		GameObject cellObj = getUnitCellObject(pos);
 		if (!cellObj)
 			return;
 
@@ -75,7 +69,7 @@ public class CellCluster : MonoBehaviour {
 		cells.Push(cellObj);
 
 		// Remove reference to GameObject
-		setCell(pos, null);
+		setUnitCell(pos, null);
 	}
 
 
@@ -86,7 +80,7 @@ public class CellCluster : MonoBehaviour {
 	/**
 	 * Instantiate cell GameObjects and add to object pool
 	 */
-	public static void expandPool(int amt, GameObject prefab) {
+	public void expandPool(int amt, GameObject prefab) {
 		Debug.Log("EXPANDING DONG");
 
 		GameObject cellObj = null;
@@ -113,7 +107,7 @@ public class CellCluster : MonoBehaviour {
 	 * Return True if cell is alive at given position
 	 */
 	public bool activeCell(Vector3Int pos) {
-		Cell cell = getCell(pos);
+		UnitCell cell = getUnitCell(pos);
 
 		// A cell is active if it is alive or dying, not spawning or dead
 		return cell && (cell.getState() == Cell.ALIVE || cell.getState() == Cell.DYING);
@@ -123,17 +117,7 @@ public class CellCluster : MonoBehaviour {
 	 * Return True if no cell exists at the given position
 	 */
 	public bool emptyAt(Vector3Int pos) {
-		return !getCell(pos);
-	}
-
-	/**
-	 * Return average generation of adjacent cells
-	 */
-	public int adjacentCellGeneration(Vector3Int pos, int id) {
-		int gen = 0;
-		foreach (Cell cell in adjacentCells(pos, id))
-			gen = cell.getGeneration() > gen ? cell.getGeneration() : gen;
-		return gen;
+		return !getUnitCell(pos);
 	}
 
 	/**
@@ -142,7 +126,7 @@ public class CellCluster : MonoBehaviour {
 	public int adjacentCellCount(Vector3Int pos, int id) {
 		// Note that IEnumerable does not support size evaluation operations
 		int count = 0;
-		foreach (Cell cell in adjacentCells(pos, id))
+		foreach (UnitCell cell in adjacentUnitCells(pos, id))
 			count += 1;
 		return count;
 	}
@@ -150,11 +134,11 @@ public class CellCluster : MonoBehaviour {
 	/**
 	 * Return iterator of cells of given ID within 3x3x3 box surrounding given position
 	 */
-	public IEnumerable<Cell> adjacentCells(Vector3Int pos, int id) {
+	public IEnumerable<UnitCell> adjacentUnitCells(Vector3Int pos, int id) {
 		foreach (Vector3Int cpos in adjacentPositions(pos)) {
 			if (!activeCell (cpos)) continue;
 
-			Cell cell = getCell(cpos);
+			UnitCell cell = getUnitCell(cpos);
 
 			// Return cells which match given ID
 			if (cell.getId() == Cell.ALL_CELLS || cell.getId() == id)
@@ -184,38 +168,45 @@ public class CellCluster : MonoBehaviour {
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 	/**
-	* Return position of cell GameObject
-	*/
+	 * Return world position of cell at given grid point
+	 */
 	public Vector3 getWorldPosition(Vector3Int pos) {
 		Vector3 posf = new Vector3(
-			pos.x * CELL_SIZE,
-			pos.y * CELL_SIZE,
-			pos.z * CELL_SIZE
+			pos.x * cell.getSize(),
+			pos.y * cell.getSize(),
+			pos.z * cell.getSize()
 		);
-		return posf + this.pos + this.vel * (Time.time - timeCreated);
+		return posf + getPosition();
 	}
 
-	public Vector3 getVelocity() {
-		return vel;
-	}
-
-	public Cell getCell(Vector3Int pos) {
-		GameObject cellObj = getCellObject(pos);
+	public UnitCell getUnitCell(Vector3Int pos) {
+		GameObject cellObj = getUnitCellObject(pos);
 		if (!cellObj)
 			return null;
 
-		return cellObj.GetComponent<Cell>();
+		return cellObj.GetComponent<UnitCell>();
 	}
 
-	public GameObject getCellObject(Vector3Int pos) {
+	public GameObject getUnitCellObject(Vector3Int pos) {
 		if (!cluster.ContainsKey(pos))
 			return null;
 		
 		return cluster[pos];
 	}
 
-	public void setCell(Vector3Int pos, GameObject cellObj) {
+	public void setUnitCell(Vector3Int pos, GameObject cellObj) {
 		cluster[pos] = cellObj;
 	}
+
+	public float getMass() {
+		return cluster.Count * cell.getMass();
+	}
+
+	public Vector3 getPosition() { 
+		return gameObject.transform.position;
+	}
+
+	public void setCell(Cell cell)	{ this.cell = cell; }
+	public void setSize(int size) 	{ this.size = size; }
 }
 

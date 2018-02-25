@@ -3,13 +3,20 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class CellPlanet : Cell {
-//
-//	protected override bool shouldSpawn(Vector3Int pos) {
-//		return pos.magnitude == generation;
-//	}
-//
-//	protected override bool shouldDie() {
-//		return (age > 0);
-//	}
 
+	public CellPlanet() : base() {
+		updateRate = 100;
+	}
+
+	protected override void spawnChildren(Cluster cluster, UnitCell cell) {
+		if (cell.getGeneration() > 4)
+			return;
+
+		foreach (Vector3Int apos in cluster.adjacentPositions(cell.getPosition()))
+			prepareSpawn(cluster, apos, cell);
+	}
+
+	protected override bool shouldDie(Cluster cluster, UnitCell cell) {
+		return false;
+	}
 }
