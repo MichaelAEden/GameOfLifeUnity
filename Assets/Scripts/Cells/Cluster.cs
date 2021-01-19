@@ -29,7 +29,7 @@ public class Cluster : MonoBehaviour {
 	protected int neighboursCausingBirthMin = 0;
 
 	// Updating
-	protected float updatePeriod = 0.5f;
+	protected float updatePeriod = 2f;
 	protected float lastUpdate = 0;
 	protected float spawnTime = 1.0f;
 
@@ -56,6 +56,7 @@ public class Cluster : MonoBehaviour {
 	void Update() {
 		while (Time.time - lastUpdate > updatePeriod) {
 			lastUpdate += updatePeriod;
+            updatePeriod += 0.5f;
 			age++;
 
 			// Determine which cells will be spawned or killed
