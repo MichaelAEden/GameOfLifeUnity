@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -7,58 +7,54 @@ public class Player : MonoBehaviour {
 	private World world;
 
 	// UI
-	private int selection = Cell.CELL_BASIC.getId();
 	private float mouseSensitivity = 2.0f;
 
 	// Physics
 	private Rigidbody rb;
+    private float maxVelocity = 10.0f;
 	private float force = 10000.0f;
+	private Quaternion upOffset = Quaternion.identity;
+	private Quaternion forwardOffset = Quaternion.identity;
 	private Quaternion upRotation = Quaternion.identity;
-	private Quaternion forwardRotation = Quaternion.identity;
 
 	// Prefabs (temp)
-	public GameObject prefabCell;
-	public GameObject prefabCell2;
-	public GameObject prefabCluster;
+	public GameObject prefabClusterBasic;
+	public GameObject prefabClusterPlanet;
+	public GameObject prefabClusterRocket;
 
 
 	void Start () {
+        Debug.Log("Creating player");
 		world = new World();
+        Debug.Log("World created");
 		rb = gameObject.GetComponent<Rigidbody>();
 
 		// UI
 		Cursor.lockState = CursorLockMode.Locked;
 		Cursor.visible = false;
-
-		// Prefabs
-		// TODO: load prefabs in each respective file
-		world.prefabCluster = prefabCluster;
-		Cell.CELL_BASIC.prefab = prefabCell;
-		Cell.CELL_PLANET.prefab = prefabCell2;
-		Cell.CELL_ROCKET.prefab = prefabCell;
 	}
 
 	void Update () {
+		// Limit player velocity
+		if (rb.velocity.magnitude > maxVelocity)
+			rb.velocity = Vector3.Normalize(rb.velocity) * maxVelocity;
+
 		// Camera tracking
 		float x = Input.GetAxis("Mouse X");
 		if (Mathf.Abs(x) > 0)
-			forwardRotation *= Quaternion.AngleAxis(x * mouseSensitivity, Vector3.up);
+			forwardOffset *= Quaternion.AngleAxis(x * mouseSensitivity, Vector3.up);
+
+		float y = Input.GetAxis("Mouse Y");
+		if (Mathf.Abs(y) > 0)
+			upOffset *= Quaternion.AngleAxis(y * mouseSensitivity, Vector3.left);
 
 		// Current selection
-		if (Input.GetKeyDown(KeyCode.Alpha1)) {
-			selection--;
-			if (selection < 0)
-				selection = Cell.cellCount() - 1;
-		}
-		else if (Input.GetKeyDown(KeyCode.Alpha2)) {
-			selection++;
-			if (selection > Cell.cellCount() - 1)
-				selection = 0;
-		}
-
-		// Spawning
-		if (Input.GetKeyDown(KeyCode.Q))
-			world.spawnCluster(Cell.getCell(selection), 50, gameObject.transform.position + new Vector3(2f, 0f, 0f));
+		if (Input.GetKeyDown(KeyCode.Alpha1))
+			spawnCluster(prefabClusterBasic);
+		else if (Input.GetKeyDown(KeyCode.Alpha2))
+			spawnCluster(prefabClusterPlanet);
+        else if (Input.GetKeyDown(KeyCode.Alpha3))
+			spawnCluster(prefabClusterRocket);
 
 		// Movement
 		Vector3 forceDirection = new Vector3();
@@ -84,11 +80,14 @@ public class Player : MonoBehaviour {
 		upRotation = Quaternion.FromToRotation(Vector3.up, -gravity);
 	}
 
+	private void spawnCluster(GameObject clusterPrefab) {
+		world.spawnCluster(clusterPrefab, gameObject.transform.position + new Vector3(0f, 0f, 2f));
+	}
 
 	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 						    Getters and Setters
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-	public Vector3 getUpwardDirection()  { return upRotation * Vector3.up; }
-	public Vector3 getForwardDirection() { return upRotation * forwardRotation * Vector3.forward; }
+	public Vector3 getUpwardDirection()  { return upRotation * upOffset * Vector3.up; }
+	public Vector3 getForwardDirection() { return upRotation * upOffset * forwardOffset * Vector3.forward; }
 }

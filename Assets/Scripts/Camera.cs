@@ -1,10 +1,10 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Cam : MonoBehaviour {
+public class Camera : MonoBehaviour {
 
-	private float cameraOffset = 25f;
+	private float cameraOffset = 10f;
 	private Player player;
 	public GameObject playerObj;
 

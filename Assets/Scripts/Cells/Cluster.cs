@@ -1,94 +1,177 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class Cluster : MonoBehaviour {
 
-	private Dictionary<Vector3Int, GameObject> cluster;
-	private Cell cell;
-	private int size;
+	protected Dictionary<Vector3Int, GameObject> cells = new Dictionary<Vector3Int, GameObject>();
+	public GameObject cellPrefab;
+	protected float size = 100.0f;
+	protected int age = 0;
+
+	// Static constants
+	protected const string CELL_COLOR = "CellColor";
+	public const int ALL_CELLS = -1;
+	public const int IMMORTAL = -1;
+
+	public const int SPAWNING = 0;
+	public const int ALIVE = 1;
+	public const int DYING = 2;
+	public const int DEAD = 3;
+
+	// Cell attributes and rules
+	protected float cellSize = 1.0f;
+	protected float cellMass = 1.0f;
+	protected int cellLife = IMMORTAL;
+	protected int neighboursCausingDeathMax = 0;    // n or more surrounding cells and cell dies
+	protected int neighboursCausingDeathMin = 0;    // n or less surrounding cells and cell dies
+	protected int neighboursCausingBirthMax = 0;    // Between n - m surrounding cells - inclusive - cell is born
+	protected int neighboursCausingBirthMin = 0;
+
+	// Updating
+	protected float updatePeriod = 0.5f;
+	protected float lastUpdate = 0;
+	protected float spawnTime = 1.0f;
 
 	// Object pooling
-	private const int POOL_COUNT = 512;
-	private Stack<GameObject> cells;
+	private const int POOL_COUNT = 1024;
+	private Stack<GameObject> cellPool = new Stack<GameObject>(POOL_COUNT);
 
 
 	void Start() {
-		cluster = new Dictionary<Vector3Int, GameObject>();
-		cells = new Stack<GameObject>(POOL_COUNT);
+		lastUpdate = Time.time;
 
-		// Populate cell GameObject pool if empty
-		if (cells.Count == 0)
-			expandPool(POOL_COUNT, cell.getPrefab());
+		// Populate cell GameObject pool
+		expandPool(POOL_COUNT, cellPrefab);
 
 		// Spawn first cell
-		spawnCell(new Vector3Int (0, 0, 0), null);
+		for (int i = 0; i < 4; i++) {
+			spawn(new Vector3Int(0, 0, 1), null);
+			spawn(new Vector3Int(0, 0, -1), null);
+			spawn(new Vector3Int(0, 1, 0), null);
+			spawn(new Vector3Int(0, -1, 0), null);
+		}
+	}
+
+	void Update() {
+		while (Time.time - lastUpdate > updatePeriod) {
+			lastUpdate += updatePeriod;
+			age++;
+
+			// Determine which cells will be spawned or killed
+			foreach (UnitCell cell in allCells())
+				update(cell);
+
+			// Spawn and kill cells
+			foreach (UnitCell cell in allCells())
+				advanceState(cell);
+		}
+	}
+
+
+	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+						    Cell behaviour
+	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+	/**
+	 * Update cell spawning and cell death
+	 */
+	public virtual void update(UnitCell cell) {
+		cell.age += 1;
+		if (cell.canMultiply) spawnChildren(cell);
+		if (shouldDie(cell)) cell.state = DYING;
 	}
 
 	/**
-	 * Create cell at given position
+	 * Update state of spawning cells and dying cells
 	 */
-	public UnitCell spawnCell(Vector3Int pos, UnitCell parent) {
-		// If cell exists in this position, kill it
-		if (getUnitCell(pos) != null)
-			killCell(pos);
+	public virtual void advanceState(UnitCell cell) {
+		if (cell.state == SPAWNING)
+			cell.state = ALIVE;
+		if (cell.state == DYING)
+			kill(cell.pos);
+	}
 
-		if (cells.Count == 0)
-			// Expand object pool
-			expandPool(1, this.cell.getPrefab());
+	/**
+	* Attempt to spawn child cells
+	*/
+	protected virtual void spawnChildren(UnitCell cell) {
+		foreach (Vector3Int apos in adjacentPositions(cell.pos))
+			if (shouldSpawn(apos))
+				spawn(apos, cell);
+	}
+
+	/**
+     * Returns True if cell at the given position should be spawned
+     */
+	protected virtual bool shouldSpawn(Vector3Int pos) {
+		int adjacentCells = adjacentCellCount(pos);
+		return (
+			getState(pos) == DEAD
+			&& adjacentCells <= neighboursCausingBirthMax
+			&& adjacentCells >= neighboursCausingBirthMin
+		);
+	}
+
+	/**
+     * Returns True if given cell should die
+     */
+	protected virtual bool shouldDie(UnitCell cell) {
+		int adjacentCells = adjacentCellCount(cell.pos);
+		return (
+			(cellLife != IMMORTAL && cell.age >= cellLife)
+			|| adjacentCells >= neighboursCausingDeathMax
+			|| adjacentCells <= neighboursCausingDeathMin
+		);
+	}
+
+	/**
+     * Spawn cell into world from object pool
+     */
+	public void spawn(Vector3Int pos, UnitCell parent) {
+		// If cell exists in this position, kill it
+		if (getCell(pos) != null)
+			kill(pos);
+
+		// Expand object pool if required
+		if (cellPool.Count == 0)
+			expandPool(1, cellPrefab);
 
 		// Get inactive cell GameObject
-		GameObject cellObj = cells.Pop();
+		GameObject cellObj = cellPool.Pop();
 
 		// Set GameObject position
-		cellObj.transform.position = parent ? parent.getTargetWorldPosition() : getWorldPosition(pos);
+		cellObj.transform.position = getWorldPosition(pos);
 		cellObj.transform.rotation = Quaternion.identity;
 		cellObj.SetActive(true);
 
-		// Update Cell and Cluster
 		UnitCell cell = cellObj.GetComponent<UnitCell>();
-		cell.setCell(this.cell);
-		cell.setCluster(this);
-		cell.setPosition(pos);
-		cell.setGeneration(parent ? parent.getGeneration() + 1 : 0);
-		setUnitCell(pos, cellObj);
-
-		return cell;
+		cell.pos = pos;
+		cell.state = SPAWNING;
+		cell.generation = parent ? parent.generation + 1 : 0;
+		setCell(pos, cellObj);
 	}
 
 	/**
-	 * Kill cell at given position
-	 */
-	public void killCell(Vector3Int pos) {
-		GameObject cellObj = getUnitCellObject(pos);
+     * Kill cell at given position and return cell to object pool
+     */
+	public void kill(Vector3Int pos) {
+		GameObject cellObj = getCellObject(pos);
 		if (!cellObj)
 			return;
 
 		// Deactivate object and add to stack
 		cellObj.SetActive(false);
-		cells.Push(cellObj);
+		cellPool.Push(cellObj);
+
+		// Reset cell attributes
+		UnitCell cell = cellObj.GetComponent<UnitCell>();
+		cell.state = DEAD;
+		cell.age = 0;
+		cell.generation = 0;
 
 		// Remove reference to GameObject
-		setUnitCell(pos, null);
-	}
-
-
-	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-						    Object Pooling
-	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-	/**
-	 * Instantiate cell GameObjects and add to object pool
-	 */
-	public void expandPool(int amt, GameObject prefab) {
-		Debug.Log("EXPANDING DONG");
-
-		GameObject cellObj = null;
-		for (int i = 0; i < amt; i++) {
-			cellObj = Object.Instantiate(prefab);
-			cellObj.SetActive(false);
-			cells.Push(cellObj);
-		}
+		setCell(pos, null);
 	}
 
 
@@ -104,29 +187,21 @@ public class Cluster : MonoBehaviour {
 	}
 
 	/**
-	 * Return True if cell is alive at given position
+	 * Return cell state at given position
 	 */
-	public bool activeCell(Vector3Int pos) {
-		UnitCell cell = getUnitCell(pos);
-
-		// A cell is active if it is alive or dying, not spawning or dead
-		return cell && (cell.getState() == Cell.ALIVE || cell.getState() == Cell.DYING);
-	}
-
-	/**
-	 * Return True if no cell exists at the given position
-	 */
-	public bool emptyAt(Vector3Int pos) {
-		return !getUnitCell(pos);
+	public int getState(Vector3Int pos) {
+		UnitCell cell = getCell(pos);
+		if (!cell)
+			return DEAD;
+		return cell.state;
 	}
 
 	/**
 	 * Return number of cells of given ID within 3x3x3 box surrounding given position
 	 */
-	public int adjacentCellCount(Vector3Int pos, int id) {
-		// Note that IEnumerable does not support size evaluation operations
+	public int adjacentCellCount(Vector3Int pos) {
 		int count = 0;
-		foreach (UnitCell cell in adjacentUnitCells(pos, id))
+		foreach (UnitCell cell in adjacentCells(pos))
 			count += 1;
 		return count;
 	}
@@ -134,15 +209,11 @@ public class Cluster : MonoBehaviour {
 	/**
 	 * Return iterator of cells of given ID within 3x3x3 box surrounding given position
 	 */
-	public IEnumerable<UnitCell> adjacentUnitCells(Vector3Int pos, int id) {
+	public IEnumerable<UnitCell> adjacentCells(Vector3Int pos) {
 		foreach (Vector3Int cpos in adjacentPositions(pos)) {
-			if (!activeCell (cpos)) continue;
-
-			UnitCell cell = getUnitCell(cpos);
-
-			// Return cells which match given ID
-			if (cell.getId() == Cell.ALL_CELLS || cell.getId() == id)
-				yield return cell;
+			int state = getState(cpos);
+			if (state == ALIVE || state == DYING)
+				yield return getCell(cpos);
 		}
 	}
 
@@ -162,51 +233,88 @@ public class Cluster : MonoBehaviour {
 		}
 	}
 
+	/**
+	 * Return iterator of all cells
+	 */
+	public List<UnitCell> allCells() {
+		List<UnitCell> allCells = new List<UnitCell>();
+		foreach (GameObject cellObj in cells.Values)
+			allCells.Add(cellObj.GetComponent<UnitCell>());
+		return allCells;
+	}
+
+
+	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+                            Handlers
+       - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+	/*
+	* Called upon cell creation or deletion by user
+	*/
+	public void onCreation(Vector3Int pos) {}
+	public void onDeletion(Vector3Int pos) {}
+
+
+	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+						    Object Pooling
+	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+	/**
+	* Instantiate cell GameObjects and add to object pool
+	*/
+	public void expandPool(int amt, GameObject prefab) {
+		for (int i = 0; i < amt; i++) {
+			GameObject cellObj = Object.Instantiate(prefab);
+			cellObj.SetActive(false);
+			cellPool.Push(cellObj);
+		}
+	}
+
 
 	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 						    Getters and Setters
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 	/**
-	 * Return world position of cell at given grid point
-	 */
+	* Return world position of cell at given grid point
+	*/
 	public Vector3 getWorldPosition(Vector3Int pos) {
 		Vector3 posf = new Vector3(
-			pos.x * cell.getSize(),
-			pos.y * cell.getSize(),
-			pos.z * cell.getSize()
+			pos.x * cellSize,
+			pos.y * cellSize,
+			pos.z * cellSize
 		);
 		return posf + getPosition();
 	}
 
-	public UnitCell getUnitCell(Vector3Int pos) {
-		GameObject cellObj = getUnitCellObject(pos);
+	public UnitCell getCell(Vector3Int pos) {
+		GameObject cellObj = getCellObject(pos);
 		if (!cellObj)
 			return null;
 
 		return cellObj.GetComponent<UnitCell>();
 	}
 
-	public GameObject getUnitCellObject(Vector3Int pos) {
-		if (!cluster.ContainsKey(pos))
+	public GameObject getCellObject(Vector3Int pos) {
+		if (!cells.ContainsKey(pos))
 			return null;
-		
-		return cluster[pos];
+
+		return cells[pos];
 	}
 
-	public void setUnitCell(Vector3Int pos, GameObject cellObj) {
-		cluster[pos] = cellObj;
+	public void setCell(Vector3Int pos, GameObject cellObj) {
+		if (cellObj)
+			cells[pos] = cellObj;
+		else
+			cells.Remove(pos);
 	}
 
 	public float getMass() {
-		return cluster.Count * cell.getMass();
+		return cells.Count * cellMass;
 	}
 
 	public Vector3 getPosition() { 
 		return gameObject.transform.position;
 	}
-
-	public void setCell(Cell cell)	{ this.cell = cell; }
-	public void setSize(int size) 	{ this.size = size; }
 }
 
