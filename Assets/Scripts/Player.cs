@@ -24,9 +24,7 @@ public class Player : MonoBehaviour {
 
 
 	void Start () {
-        Debug.Log("Creating player");
 		world = new World();
-        Debug.Log("World created");
 		rb = gameObject.GetComponent<Rigidbody>();
 
 		// UI
